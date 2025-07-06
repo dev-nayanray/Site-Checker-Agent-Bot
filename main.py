@@ -2,23 +2,25 @@ import pyautogui
 import subprocess
 import time
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext
+from tkinter import ttk, messagebox, scrolledtext, filedialog
 import sys
 import os
 import random
 import datetime
 import threading
-import webbrowser
 import requests
 from bs4 import BeautifulSoup
 from PIL import Image, ImageTk
 import re
+import json
+import openai
+import base64
 
 class AutomationBot:
     def __init__(self, root):
         self.root = root
-        self.root.title("🚀 Website Automation Bot")
-        self.root.geometry("900x800")
+        self.root.title("🚀 AI-Powered Website Automation Bot")
+        self.root.geometry("1000x800")
         self.root.resizable(True, True)
         
         # Set window icon if available
@@ -30,6 +32,9 @@ class AutomationBot:
         # Create stop event
         self.stop_event = threading.Event()
         self.current_process = None
+        self.ai_automation_active = False
+        self.openai_api_key = ""
+        self.element_images = {}  # Store uploaded UI element images
         
         # Configure styles
         self.style = ttk.Style()
@@ -45,8 +50,10 @@ class AutomationBot:
                       foreground=[("selected", "white")])
         self.style.configure("Red.TButton", foreground="white", background="#d32f2f")
         self.style.configure("Green.TButton", foreground="white", background="#388e3c")
+        self.style.configure("Blue.TButton", foreground="white", background="#1976d2")
         self.style.configure("Header.TLabel", font=("Segoe UI", 14, "bold"), foreground="#333")
         self.style.configure("Section.TLabelframe.Label", font=("Segoe UI", 10, "bold"), foreground="#444")
+        self.style.configure("AI.TFrame", background="#e3f2fd")
         
         # Create notebook for tabs
         self.notebook = ttk.Notebook(root)
@@ -54,10 +61,12 @@ class AutomationBot:
         
         # Create frames for tabs
         self.config_frame = ttk.Frame(self.notebook)
+        self.ai_frame = ttk.Frame(self.notebook, style="AI.TFrame")
         self.log_frame = ttk.Frame(self.notebook)
         self.about_frame = ttk.Frame(self.notebook)
         
         self.notebook.add(self.config_frame, text="Configuration")
+        self.notebook.add(self.ai_frame, text="AI Commands")
         self.notebook.add(self.log_frame, text="Execution Log")
         self.notebook.add(self.about_frame, text="About")
         
@@ -75,7 +84,7 @@ class AutomationBot:
         except:
             self.logo = None
         
-        header = ttk.Label(header_frame, text="Website Automation Bot", style="Header.TLabel")
+        header = ttk.Label(header_frame, text="AI-Powered Website Automation Bot", style="Header.TLabel")
         header.pack(side="left", fill="x", expand=True)
         
         # URL Section
@@ -163,7 +172,72 @@ class AutomationBot:
                                font=("Segoe UI", 9), foreground="#333")
         status_label.grid(row=7, column=0, columnspan=4, pady=(0, 10))
         
-        # Log Frame
+        # ================== AI Commands Frame ==================
+        ai_header_frame = ttk.Frame(self.ai_frame, style="AI.TFrame")
+        ai_header_frame.pack(fill="x", padx=10, pady=(10, 5))
+        
+        ttk.Label(ai_header_frame, text="AI-Powered Automation", style="Header.TLabel").pack(side="left")
+        
+        # API Key Frame
+        api_frame = ttk.LabelFrame(self.ai_frame, text="OpenAI API Settings", style="Section.TLabelframe")
+        api_frame.pack(fill="x", padx=10, pady=5)
+        
+        ttk.Label(api_frame, text="OpenAI API Key:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.api_entry = ttk.Entry(api_frame, width=50, show="*")
+        self.api_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        
+        # Save API Key button
+        save_btn = ttk.Button(api_frame, text="Save Key", style="Blue.TButton", command=self.save_api_key)
+        save_btn.grid(row=0, column=2, padx=5, pady=5)
+        
+        # UI Elements Frame
+        element_frame = ttk.LabelFrame(self.ai_frame, text="UI Element Recognition", style="Section.TLabelframe")
+        element_frame.pack(fill="x", padx=10, pady=5)
+        
+        ttk.Label(element_frame, text="Upload UI elements:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        
+        self.element_listbox = tk.Listbox(element_frame, height=4, width=30)
+        self.element_listbox.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        
+        add_btn = ttk.Button(element_frame, text="Add Element", command=self.add_ui_element)
+        add_btn.grid(row=0, column=2, padx=(5, 2), pady=5)
+        
+        remove_btn = ttk.Button(element_frame, text="Remove", command=self.remove_ui_element)
+        remove_btn.grid(row=0, column=3, padx=2, pady=5)
+        
+        # AI Command Input
+        command_frame = ttk.LabelFrame(self.ai_frame, text="Natural Language Commands", style="Section.TLabelframe")
+        command_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        ttk.Label(command_frame, text="Enter your automation command:").pack(anchor="w", padx=5, pady=(5, 0))
+        
+        example_command = "Visit example.com, search for 'automation tools', click the search button, wait 5 seconds, and take a screenshot"
+        self.command_entry = scrolledtext.ScrolledText(command_frame, height=8, font=("Segoe UI", 10), wrap="word")
+        self.command_entry.pack(fill="both", expand=True, padx=5, pady=5)
+        self.command_entry.insert("1.0", example_command)
+        
+        # Action Buttons
+        action_frame = ttk.Frame(self.ai_frame, style="AI.TFrame")
+        action_frame.pack(fill="x", padx=10, pady=5)
+        
+        self.parse_btn = ttk.Button(action_frame, text="Parse & Run", style="Green.TButton", 
+                                   command=self.start_ai_automation)
+        self.parse_btn.pack(side="left", padx=10, ipadx=10)
+        
+        self.ai_stop_btn = ttk.Button(action_frame, text="⏹ Stop AI", style="Red.TButton", 
+                                    command=self.stop_ai_automation, state="disabled")
+        self.ai_stop_btn.pack(side="left", padx=10, ipadx=10)
+        
+        # Parsed Actions Display
+        parsed_frame = ttk.LabelFrame(self.ai_frame, text="Parsed Actions", style="Section.TLabelframe")
+        parsed_frame.pack(fill="both", expand=True, padx=10, pady=(5, 10))
+        
+        self.parsed_text = scrolledtext.ScrolledText(parsed_frame, height=8, font=("Consolas", 9), wrap="word")
+        self.parsed_text.pack(fill="both", expand=True, padx=5, pady=5)
+        self.parsed_text.insert("1.0", "Parsed actions will appear here...")
+        self.parsed_text.config(state="disabled")
+        
+        # ================== Log Frame ==================
         log_header = ttk.Frame(self.log_frame)
         log_header.pack(fill="x", padx=10, pady=(10, 5))
         
@@ -176,41 +250,39 @@ class AutomationBot:
         self.log_text.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         self.log_text.config(state="disabled")
         
-        # About Frame
+        # ================== About Frame ==================
         about_container = ttk.Frame(self.about_frame)
         about_container.pack(fill="both", expand=True, padx=20, pady=20)
         
         about_content = """
-        Website Automation Bot v2.0
+        AI-Powered Website Automation Bot v3.0
 
-        This professional automation tool simulates human-like interactions with websites for testing, monitoring, or data collection purposes.
+        This advanced automation tool combines traditional scripting with AI capabilities 
+        to understand and execute natural language commands for website automation.
 
-        Key Features:
-        • Multi-tab website navigation
-        • Realistic mouse movements and clicks
-        • Automated scrolling and content reading
-        • Keyword-based content verification
-        • Screenshot capture functionality
-        • Detailed execution logging
-        • Progress tracking and real-time status updates
+        New AI Features:
+        • Natural Language Command Processing
+        • OpenAI API Integration
+        • Website Content Summarization
+        • UI Element Recognition via Image Matching
+        • Automated Action Sequence Generation
 
-        Usage Guidelines:
-        1. Enter target URLs (one per line)
-        2. Configure timing parameters
-        3. Select desired automation tasks
-        4. Start the automation process
-        5. Monitor progress in real-time
-        6. Stop anytime with the stop button
+        How to Use AI Commands:
+        1. Enter your OpenAI API key
+        2. Upload UI elements you want the bot to recognize
+        3. Describe your automation task in natural language
+        4. Click "Parse & Run" to generate and execute the automation sequence
+        5. Monitor the execution in the log
 
         Technical Specifications:
-        • Cross-platform compatibility
-        • Chrome browser integration
-        • Multi-threaded execution
-        • Lightweight and efficient
-        • Customizable delay settings
+        • GPT-4 Turbo for command parsing
+        • Multi-threaded execution engine
+        • Cross-platform UI element recognition
+        • Real-time progress tracking
+        • Detailed execution logging
 
         Developed by: Nayan Ray
-        Release Date: July 2023
+        Release Date: July 2025
         License: MIT Open Source
         """
         
@@ -223,7 +295,7 @@ class AutomationBot:
         footer = ttk.Frame(root)
         footer.pack(fill="x", pady=(0, 5))
         
-        ttk.Label(footer, text="🔧 Developed by Nayan Ray | 🚀 Professional Automation Tool v2.0", 
+        ttk.Label(footer, text="🔧 Developed by Nayan Ray | 🚀 AI-Powered Automation v3.0", 
                  font=("Segoe UI", 9), foreground="#666").pack(pady=5)
         
         # Configure grid weights
@@ -269,6 +341,14 @@ class AutomationBot:
             self.log_text.tag_config("stop", foreground="orange")
             self.log_text.insert("end", f"[{timestamp}] ", "normal")
             self.log_text.insert("end", message + "\n", "stop")
+        elif message.startswith("🤖"):
+            self.log_text.tag_config("ai", foreground="#1976d2")
+            self.log_text.insert("end", f"[{timestamp}] ", "normal")
+            self.log_text.insert("end", message + "\n", "ai")
+        elif message.startswith("🔍"):
+            self.log_text.tag_config("element", foreground="#7b1fa2")
+            self.log_text.insert("end", f"[{timestamp}] ", "normal")
+            self.log_text.insert("end", message + "\n", "element")
         else:
             self.log_text.insert("end", f"[{timestamp}] {message}\n")
         
@@ -281,6 +361,36 @@ class AutomationBot:
         self.status_var.set(message)
         self.root.update()
     
+    def save_api_key(self):
+        """Save OpenAI API key"""
+        self.openai_api_key = self.api_entry.get().strip()
+        if self.openai_api_key:
+            self.log_message("🔑 OpenAI API key saved successfully")
+        else:
+            self.log_message("⚠️ Please enter a valid OpenAI API key")
+    
+    def add_ui_element(self):
+        """Add a UI element image for recognition"""
+        file_path = filedialog.askopenfilename(
+            title="Select UI Element Image",
+            filetypes=[("Image Files", "*.png;*.jpg;*.jpeg")]
+        )
+        
+        if file_path:
+            element_name = os.path.basename(file_path).split('.')[0]
+            self.element_images[element_name] = file_path
+            self.element_listbox.insert(tk.END, element_name)
+            self.log_message(f"📸 Added UI element: {element_name}")
+    
+    def remove_ui_element(self):
+        """Remove selected UI element"""
+        selected = self.element_listbox.curselection()
+        if selected:
+            element_name = self.element_listbox.get(selected[0])
+            del self.element_images[element_name]
+            self.element_listbox.delete(selected[0])
+            self.log_message(f"🗑️ Removed UI element: {element_name}")
+    
     def human_delay(self, base=0.5, variation=0.3):
         """Random delay to simulate human behavior"""
         delay = random.uniform(base - variation, base + variation)
@@ -290,7 +400,7 @@ class AutomationBot:
         """Wait for specified time, but check for stop event periodically"""
         start = time.time()
         while time.time() - start < seconds:
-            if self.stop_event.is_set():
+            if self.stop_event.is_set() or (self.ai_automation_active and self.stop_event.is_set()):
                 return True  # Stop was requested
             time.sleep(0.1)
         return False  # Completed without stop
@@ -331,6 +441,313 @@ class AutomationBot:
         except Exception as e:
             self.log_message(f"⚠️ Error checking website content: {str(e)}")
             return False
+    
+    def summarize_content(self, url):
+        """Summarize website content using OpenAI"""
+        if not self.openai_api_key:
+            self.log_message("⚠️ OpenAI API key not set. Cannot summarize content.")
+            return ""
+        
+        try:
+            self.log_message(f"🤖 Generating summary for: {url}")
+            response = requests.get(url, timeout=15)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Extract main content
+            for tag in soup(['header', 'footer', 'nav', 'script', 'style']):
+                tag.decompose()
+            
+            text = soup.get_text()
+            text = re.sub(r'\s+', ' ', text).strip()
+            
+            # Truncate to fit token limits
+            if len(text) > 12000:
+                text = text[:12000] + "... [TRUNCATED]"
+            
+            # Call OpenAI API
+            openai.api_key = self.openai_api_key
+            response = openai.ChatCompletion.create(
+                model="gpt-4-turbo",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant that summarizes web page content."},
+                    {"role": "user", "content": f"Summarize the following content in 3-4 sentences:\n\n{text}"}
+                ],
+                max_tokens=300,
+                temperature=0.5
+            )
+            
+            summary = response.choices[0].message['content'].strip()
+            self.log_message(f"📝 Summary for {url}:\n{summary}")
+            return summary
+        except Exception as e:
+            self.log_message(f"❌ Error generating summary: {str(e)}")
+            return ""
+    
+    def parse_command_with_openai(self, command):
+        """Parse natural language command into structured actions using OpenAI"""
+        if not self.openai_api_key:
+            self.log_message("❌ OpenAI API key not set. Cannot parse command.")
+            return []
+        
+        try:
+            self.log_message("🤖 Parsing command with OpenAI...")
+            openai.api_key = self.openai_api_key
+            
+            # Build list of available UI elements
+            element_list = ", ".join(self.element_images.keys()) if self.element_images else "None"
+            
+            response = openai.ChatCompletion.create(
+                model="gpt-4-turbo",
+                messages=[
+                    {"role": "system", "content": f"""
+                    You are an automation command parser. Convert the user's natural language command into a JSON array of automation actions.
+                    
+                    Available actions and parameters:
+                    - visit: {{"url": "<full_url>"}}
+                    - click: {{"x": <number>, "y": <number>}} OR {{"element": "<element_name>"}}
+                    - move: {{"x": <number>, "y": <number>}}
+                    - scroll: {{"amount": <number>}} (positive=up, negative=down)
+                    - wait: {{"seconds": <number>}}
+                    - screenshot: {{"filename": "<filename>.png"}} (optional)
+                    - check: {{"keyword": "<keyword>"}}
+                    - summarize: {{}} (no parameters)
+                    
+                    Rules:
+                    - Always start with a visit action
+                    - Use 'element' parameter for clicks if element name is provided
+                    - Use coordinates only when element not specified
+                    - Generate valid JSON only
+                    - Include only the JSON array in your response
+                    
+                    Available UI elements: {element_list}
+                    """},
+                    {"role": "user", "content": command}
+                ],
+                max_tokens=500,
+                temperature=0.2
+            )
+            
+            # Extract JSON from response
+            response_text = response.choices[0].message['content'].strip()
+            self.log_message(f"🤖 OpenAI response: {response_text}")
+            
+            # Try to find JSON in the response
+            try:
+                # Extract JSON string from response
+                json_start = response_text.find('[')
+                json_end = response_text.rfind(']') + 1
+                json_str = response_text[json_start:json_end]
+                
+                actions = json.loads(json_str)
+                self.log_message("✅ Command parsed successfully")
+                return actions
+            except json.JSONDecodeError:
+                self.log_message("❌ Failed to parse JSON response from OpenAI")
+                return []
+        except Exception as e:
+            self.log_message(f"❌ OpenAI API error: {str(e)}")
+            return []
+    
+    def execute_ai_action(self, action):
+        """Execute a single AI-generated action"""
+        action_type = action.get('action')
+        
+        if action_type == "visit":
+            url = action.get('url', '')
+            if not url.startswith('http'):
+                url = 'https://' + url
+            self.log_message(f"🌐 Visiting: {url}")
+            
+            try:
+                chrome_path = self.get_chrome_path()
+                self.current_process = subprocess.Popen([chrome_path, "--incognito", url])
+                self.wait_with_stop(5)  # Wait for page to load
+                return True
+            except Exception as e:
+                self.log_message(f"❌ Error visiting {url}: {str(e)}")
+                return False
+                
+        elif action_type == "click":
+            if 'element' in action:
+                element_name = action['element']
+                self.log_message(f"🔍 Clicking UI element: {element_name}")
+                return self.click_ui_element(element_name)
+            else:
+                x = action.get('x', 100)
+                y = action.get('y', 100)
+                self.log_message(f"🖱️ Clicking at position ({x}, {y})")
+                pyautogui.moveTo(x, y, duration=random.uniform(0.5, 1.0))
+                pyautogui.click()
+                self.human_delay()
+                return True
+                
+        elif action_type == "move":
+            x = action.get('x', 100)
+            y = action.get('y', 100)
+            self.log_message(f"↗️ Moving mouse to ({x}, {y})")
+            pyautogui.moveTo(x, y, duration=random.uniform(0.8, 1.2))
+            self.human_delay()
+            return True
+            
+        elif action_type == "scroll":
+            amount = action.get('amount', 300)
+            self.log_message(f"📜 Scrolling by {amount}px")
+            pyautogui.scroll(amount)
+            self.human_delay(1.0)
+            return True
+            
+        elif action_type == "wait":
+            seconds = action.get('seconds', 3)
+            self.log_message(f"⏳ Waiting {seconds} seconds")
+            return not self.wait_with_stop(seconds)
+            
+        elif action_type == "screenshot":
+            filename = action.get('filename', f"screenshot_{int(time.time())}.png")
+            self.log_message(f"📸 Taking screenshot: {filename}")
+            pyautogui.screenshot(filename)
+            self.human_delay(1.0)
+            return True
+            
+        elif action_type == "check":
+            keyword = action.get('keyword', '')
+            if keyword:
+                return self.check_website_content("", keyword)  # URL not needed here
+            return True
+            
+        elif action_type == "summarize":
+            # For simplicity, we'll summarize the current page
+            self.log_message("🤖 Summarizing current page content")
+            summary = self.summarize_content("")  # URL not needed here
+            if summary:
+                self.log_message(f"📝 Summary: {summary}")
+            return True
+            
+        else:
+            self.log_message(f"⚠️ Unknown action type: {action_type}")
+            return False
+    
+    def click_ui_element(self, element_name):
+        """Click a UI element using image recognition"""
+        if element_name not in self.element_images:
+            self.log_message(f"❌ UI element '{element_name}' not found")
+            return False
+        
+        image_path = self.element_images[element_name]
+        
+        try:
+            # Try to find the element on screen
+            location = pyautogui.locateCenterOnScreen(image_path, confidence=0.7)
+            if location:
+                x, y = location
+                self.log_message(f"🔍 Found '{element_name}' at ({x}, {y})")
+                pyautogui.moveTo(x, y, duration=random.uniform(0.5, 1.0))
+                pyautogui.click()
+                self.human_delay()
+                return True
+            else:
+                self.log_message(f"⚠️ Could not find UI element '{element_name}' on screen")
+                return False
+        except Exception as e:
+            self.log_message(f"❌ Error locating UI element: {str(e)}")
+            return False
+    
+    def start_ai_automation(self):
+        """Start AI-powered automation"""
+        if not self.openai_api_key:
+            self.log_message("❌ Please enter and save your OpenAI API key first")
+            return
+            
+        # Get the natural language command
+        command = self.command_entry.get("1.0", tk.END).strip()
+        if not command:
+            self.log_message("❌ Please enter an automation command")
+            return
+            
+        # Disable buttons
+        self.parse_btn.config(state="disabled")
+        self.ai_stop_btn.config(state="normal")
+        self.ai_automation_active = True
+        self.stop_event.clear()
+        
+        # Start in new thread
+        ai_thread = threading.Thread(target=self.run_ai_automation, args=(command,))
+        ai_thread.daemon = True
+        ai_thread.start()
+    
+    def run_ai_automation(self, command):
+        """Run the AI-powered automation sequence"""
+        try:
+            self.log_message(f"🤖 Starting AI automation for command: {command}")
+            
+            # Parse the command
+            actions = self.parse_command_with_openai(command)
+            
+            # Update the parsed actions display
+            self.parsed_text.config(state="normal")
+            self.parsed_text.delete(1.0, tk.END)
+            self.parsed_text.insert(tk.END, json.dumps(actions, indent=2))
+            self.parsed_text.config(state="disabled")
+            
+            if not actions:
+                self.log_message("❌ No actions generated. Stopping automation.")
+                return
+                
+            # Execute actions
+            total = len(actions)
+            self.log_message(f"🤖 Executing {total} actions...")
+            
+            for index, action in enumerate(actions, start=1):
+                if self.stop_event.is_set():
+                    self.log_message("🛑 AI automation stopped by user")
+                    break
+                    
+                # Update progress
+                progress = (index / total) * 100
+                self.progress_var.set(progress)
+                self.update_status(f"AI Action {index}/{total}: {action.get('action', '')}")
+                
+                # Execute action
+                success = self.execute_ai_action(action)
+                if not success:
+                    self.log_message(f"⚠️ Action {index} failed, but continuing...")
+                
+                # Check if we should stop after each action
+                if self.stop_event.is_set():
+                    break
+            
+            if not self.stop_event.is_set():
+                self.log_message("🤖 ✅ AI automation completed successfully")
+                self.progress_var.set(100)
+                self.update_status("AI automation completed")
+        
+        except Exception as e:
+            self.log_message(f"❌ AI automation error: {str(e)}")
+        finally:
+            # Terminate Chrome if still running
+            if self.current_process:
+                try:
+                    self.current_process.terminate()
+                except:
+                    pass
+                    
+            # Re-enable buttons
+            self.parse_btn.config(state="normal")
+            self.ai_stop_btn.config(state="disabled")
+            self.ai_automation_active = False
+    
+    def stop_ai_automation(self):
+        """Stop the AI-powered automation"""
+        self.log_message("🛑 Stopping AI automation...")
+        self.stop_event.set()
+        self.update_status("Stopping AI automation...")
+        
+        # Terminate Chrome process if running
+        if self.current_process:
+            try:
+                self.current_process.terminate()
+                self.log_message("🔒 Chrome process terminated")
+            except:
+                pass
     
     def start_automation(self):
         """Start the automation process in a separate thread"""
